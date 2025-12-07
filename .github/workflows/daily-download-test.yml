@@ -17,7 +17,7 @@ jobs:
       - name: Trigger YouTube Download
         run: |
           response=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://jebin2-youtube-downloader.hf.space/api/download" \
+            "https://youtube-downloader-52xg.onrender.com/api/download" \
             -H "Content-Type: application/json" \
             -d '{"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"}')
           

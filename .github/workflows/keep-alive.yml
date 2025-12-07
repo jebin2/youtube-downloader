@@ -1,0 +1,33 @@
+name: Keep Alive
+
+on:
+  schedule:
+    # Ping every 14 minutes to prevent Render from sleeping (15 min idle timeout)
+    - cron: '*/14 * * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Ping Health Endpoint
+        run: |
+          # Update this URL after Render deployment
+          RENDER_URL="https://youtube-downloader-52xg.onrender.com"
+          
+          echo "🏓 Pinging $RENDER_URL/health..."
+          
+          response=$(curl -s -w "\n%{http_code}" -m 60 "$RENDER_URL/health" || echo -e "\n000")
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -1)
+          
+          echo "Response: $body"
+          echo "HTTP Status: $http_code"
+          
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "✅ Service is alive!"
+          else
+            echo "⚠️ Service might be waking up or unavailable (status: $http_code)"
+          fi
