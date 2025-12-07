@@ -1,0 +1,35 @@
+name: Daily YouTube Download Test
+
+on:
+  schedule:
+    # Runs at 2 PM IST (8:30 AM UTC) every day
+    - cron: '30 8 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  trigger-download:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Trigger YouTube Download
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://jebin2-youtube-downloader.hf.space/api/download" \
+            -H "Content-Type: application/json" \
+            -d '{"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"}')
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -1)
+          
+          echo "Response: $body"
+          echo "HTTP Status: $http_code"
+          
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "✅ YouTube download request submitted successfully!"
+          else
+            echo "❌ YouTube download request failed with status $http_code"
+            exit 1
+          fi
