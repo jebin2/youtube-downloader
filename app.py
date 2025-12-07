@@ -93,12 +93,20 @@ def cleanup_old_entries():
 def extract_video_info(url):
     """Extract video info using yt-dlp without downloading"""
     try:
-        command = ['yt-dlp', '--dump-json', '--no-download', url]
+        command = [
+            'yt-dlp',
+            '--dump-json',
+            '--no-download',
+            '--no-warnings',
+            '--extractor-args', 'youtube:player_client=web',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            url
+        ]
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=120
         )
         
         if result.returncode == 0:
@@ -108,6 +116,8 @@ def extract_video_info(url):
                 'duration': info.get('duration_string', info.get('duration', '')),
                 'thumbnail': info.get('thumbnail', ''),
             }
+        else:
+            print(f"⚠️  yt-dlp info error: {result.stderr}")
     except Exception as e:
         print(f"⚠️  Failed to extract video info: {e}")
     
@@ -169,9 +179,14 @@ def worker_loop():
                     print(f"🔄 Downloading video...")
                     command = [
                         'yt-dlp',
-                        '-f', 'best[ext=mp4]/best',
+                        '-f', 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
                         '-o', output_template,
                         '--no-playlist',
+                        '--no-warnings',
+                        '--extractor-args', 'youtube:player_client=web',
+                        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        '--retries', '3',
+                        '--fragment-retries', '3',
                         url
                     ]
                     
