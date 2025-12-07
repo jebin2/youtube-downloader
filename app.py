@@ -98,8 +98,8 @@ def extract_video_info(url):
             '--dump-json',
             '--no-download',
             '--no-warnings',
-            '--extractor-args', 'youtube:player_client=web',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '--extractor-args', 'youtube:player_client=android',
+            '--no-check-certificates',
             url
         ]
         result = subprocess.run(
@@ -183,8 +183,8 @@ def worker_loop():
                         '-o', output_template,
                         '--no-playlist',
                         '--no-warnings',
-                        '--extractor-args', 'youtube:player_client=web',
-                        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        '--extractor-args', 'youtube:player_client=android',
+                        '--no-check-certificates',
                         '--retries', '3',
                         '--fragment-retries', '3',
                         url
