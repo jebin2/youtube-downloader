@@ -1,0 +1,14 @@
+# Render Blueprint
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: youtube-downloader
+    runtime: docker
+    repo: https://github.com/jebin2/youtube-downloader
+    branch: main
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 7860
