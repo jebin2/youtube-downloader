@@ -118,7 +118,6 @@ def extract_video_info(url):
             '--no-warnings',
             '--cookies', COOKIES_FILE,
             '--user-agent', USER_AGENT,
-            '--extractor-args', 'youtube:player_client=web',
             '--no-check-certificates',
             url
         ]
@@ -199,13 +198,12 @@ def worker_loop():
                     print(f"🔄 Downloading video...")
                     command = [
                         'yt-dlp',
-                        '-f', 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+                        '-f', 'b',  # Best single format (most compatible)
                         '-o', output_template,
                         '--no-playlist',
                         '--no-warnings',
                         '--cookies', COOKIES_FILE,
                         '--user-agent', USER_AGENT,
-                        '--extractor-args', 'youtube:player_client=web',
                         '--no-check-certificates',
                         '--retries', '3',
                         '--fragment-retries', '3',
