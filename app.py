@@ -14,7 +14,10 @@ app = Flask(__name__)
 CORS(app)
 
 DOWNLOAD_FOLDER = 'downloads'
-COOKIES_FILE = 'www.youtube.com_cookies.txt'
+COOKIES_FILE = 'cookies.txt'
+
+# Chrome user-agent to match cookies
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
@@ -113,8 +116,9 @@ def extract_video_info(url):
             '--dump-json',
             '--no-download',
             '--no-warnings',
-            '--cookies', 'www.youtube.com_cookies.txt',
-            '--extractor-args', 'youtube:player_client=android',
+            '--cookies', COOKIES_FILE,
+            '--user-agent', USER_AGENT,
+            '--extractor-args', 'youtube:player_client=web',
             '--no-check-certificates',
             url
         ]
@@ -199,8 +203,9 @@ def worker_loop():
                         '-o', output_template,
                         '--no-playlist',
                         '--no-warnings',
-                        '--cookies', 'www.youtube.com_cookies.txt',
-                        '--extractor-args', 'youtube:player_client=android',
+                        '--cookies', COOKIES_FILE,
+                        '--user-agent', USER_AGENT,
+                        '--extractor-args', 'youtube:player_client=web',
                         '--no-check-certificates',
                         '--retries', '3',
                         '--fragment-retries', '3',

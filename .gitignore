@@ -1,3 +1,6 @@
 downloads/
 youtube_downloads.db
+cookies.txt
+*.cookies.txt
 cc.txt
+venv/
