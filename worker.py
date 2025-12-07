@@ -27,6 +27,7 @@ def extract_video_info(url):
             '--dump-json',
             '--no-download',
             '--no-warnings',
+            '--cookies', 'www.youtube.com_cookies.txt',
             '--extractor-args', 'youtube:player_client=android',
             '--no-check-certificates',
             url
@@ -66,6 +67,7 @@ def download_video(download_id, url):
             '-o', output_template,
             '--no-playlist',
             '--no-warnings',
+            '--cookies', 'www.youtube.com_cookies.txt',
             '--extractor-args', 'youtube:player_client=android',
             '--no-check-certificates',
             '--retries', '3',

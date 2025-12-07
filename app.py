@@ -14,8 +14,23 @@ app = Flask(__name__)
 CORS(app)
 
 DOWNLOAD_FOLDER = 'downloads'
+COOKIES_FILE = 'www.youtube.com_cookies.txt'
 
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
+# Create cookies file from environment variable if it exists
+def setup_cookies():
+    cookies_content = os.environ.get('YOUTUBE_COOKIES')
+    if cookies_content:
+        with open(COOKIES_FILE, 'w') as f:
+            f.write(cookies_content)
+        print("✅ YouTube cookies loaded from environment variable")
+    elif os.path.exists(COOKIES_FILE):
+        print("✅ YouTube cookies file found")
+    else:
+        print("⚠️  No YouTube cookies found - downloads may fail")
+
+setup_cookies()
 
 # Worker state
 worker_thread = None
@@ -98,6 +113,7 @@ def extract_video_info(url):
             '--dump-json',
             '--no-download',
             '--no-warnings',
+            '--cookies', 'www.youtube.com_cookies.txt',
             '--extractor-args', 'youtube:player_client=android',
             '--no-check-certificates',
             url
@@ -183,6 +199,7 @@ def worker_loop():
                         '-o', output_template,
                         '--no-playlist',
                         '--no-warnings',
+                        '--cookies', 'www.youtube.com_cookies.txt',
                         '--extractor-args', 'youtube:player_client=android',
                         '--no-check-certificates',
                         '--retries', '3',
