@@ -127,7 +127,14 @@ info "ffmpeg $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')"
 # ── 5. yt-dlp standalone binary (latest release) ──────────────────────────────
 step "yt-dlp binary"
 mkdir -p "$YTDLP_DIR"
-curl -fsSL -o "$YTDLP_BIN" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+case "$(uname -m)" in
+  aarch64|arm64)     ARCH_BIN="yt-dlp_linux_aarch64" ;;
+  armv7l|armv6l)     ARCH_BIN="yt-dlp_linux_armv7l" ;;
+  x86_64|amd64)      ARCH_BIN="yt-dlp_linux" ;;
+  *) warn "Unknown architecture $(uname -m) — falling back to x86_64 binary."; ARCH_BIN="yt-dlp_linux" ;;
+esac
+warn "Architecture $(uname -m) → downloading $ARCH_BIN"
+curl -fsSL -o "$YTDLP_BIN" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$ARCH_BIN"
 chmod +x "$YTDLP_BIN"
 export PATH="$YTDLP_DIR:$PATH"
 YTDLP_VERSION="$("$YTDLP_BIN" --version)"
