@@ -253,8 +253,23 @@ for host, port, state, app, is_me in rows:
     dot = f"{GREEN}●{NC}" if state == "online" else f"{YELLOW}○{NC}"
     here = f"  {GREEN}← this app{NC}" if is_me else ""
     print(f"  {host.ljust(w_host)}  {port.rjust(5)}  {dot} {state.ljust(w_state)}  {app.ljust(w_app)}{here}")
-print(line)
+ print(line)
 PYEOF
+}
+
+# Make sure $1's DNS CNAME points at this tunnel, so the hostname actually
+# resolves. Mirrors jebin2/lib/scripts/setup_cloudflare_tunnel.sh (route dns);
+# runs even when the ingress rule already exists, because adding a rule never
+# registers DNS on its own.
+ensure_dns_route() {
+  local domain="$1" tunnel="${1%%.*}"
+  if command -v cloudflared >/dev/null 2>&1 && cloudflared tunnel list 2>/dev/null | grep -q "$tunnel"; then
+    cloudflared tunnel route dns --overwrite-dns "$tunnel" "$domain" \
+      && info "DNS route ensured: $domain → tunnel '$tunnel'" \
+      || warn "Failed to add DNS route — add manually: cloudflared tunnel route dns $tunnel $domain"
+  else
+    warn "Tunnel '$tunnel' not found — add DNS manually: cloudflared tunnel route dns <TUNNEL_NAME> $domain"
+  fi
 }
 
 step "Port"
@@ -383,7 +398,8 @@ else
   ROUTE=$(check_tunnel_route "$CF_CONFIG" "$DOMAIN" "$PORT")
   case "$ROUTE" in
     OK)
-      info "$DOMAIN → localhost:$PORT already routed — no change needed" ;;
+      info "$DOMAIN → localhost:$PORT already routed — no change needed"
+      ensure_dns_route "$DOMAIN" ;;
     CLASH*)
       error "Port $PORT is already routed to ${ROUTE#CLASH } in $CF_CONFIG.
   Adding $DOMAIN on the same port would give two hostnames one app.
@@ -405,16 +421,7 @@ open(config_path, 'w').write(content)
 print("Config updated.")
 PYEOF
       info "Added $DOMAIN → localhost:$PORT (existing rules untouched; backup at ${CF_CONFIG}.bak)"
-      # Point DNS at the tunnel so the hostname resolves (mirrors
-      # jebin2/lib/scripts/setup_cloudflare_tunnel.sh: tunnel route dns).
-      TUNNEL_NAME="${DOMAIN%%.*}"
-      if command -v cloudflared >/dev/null 2>&1 && cloudflared tunnel list 2>/dev/null | grep -q "$TUNNEL_NAME"; then
-        cloudflared tunnel route dns --overwrite-dns "$TUNNEL_NAME" "$DOMAIN" \
-          && info "DNS route added: $DOMAIN → tunnel '$TUNNEL_NAME'" \
-          || warn "Failed to add DNS route — add manually: cloudflared tunnel route dns $TUNNEL_NAME $DOMAIN"
-      else
-        warn "Tunnel '$TUNNEL_NAME' not found — add DNS manually: cloudflared tunnel route dns <TUNNEL_NAME> $DOMAIN"
-      fi
+      ensure_dns_route "$DOMAIN"
       systemctl is-active --quiet cloudflared 2>/dev/null && sudo systemctl restart cloudflared && info "cloudflared restarted" \
         || warn "Restart cloudflared manually: sudo systemctl restart cloudflared" ;;
   esac
