@@ -3,7 +3,9 @@ set -euo pipefail
 
 APP_NAME="youtube-downloader"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PORT="${PORT:-7860}"                 # matches the Cloudflare Tunnel route
+PREFERRED_PORT=7860
+# Empty unless the caller set PORT= — an explicit port is honoured as given.
+PORT_REQUESTED="${PORT:-}"
 DOMAIN="yt.voidall.com"
 VENV_DIR="$APP_DIR/.venv"
 PYTHON="$VENV_DIR/bin/python"
@@ -22,32 +24,61 @@ echo "  YouTube Downloader — VPS deploy (Flask + embedded worker, single origi
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 
 # ── Port and route safety ─────────────────────────────────────────────────────
-# Ports on this VPS. Keep this list in step across all three deploy scripts —
-# every one of them refuses to start on a port another app already holds.
+# Nothing outside this VPS refers to a port — every app is reached by its
+# subdomain through the tunnel — so the port is an implementation detail and
+# this script picks a free one rather than insisting on a number.
 #
+# Preferred ports, if free:
 #   3000  FundsFlee          (fundsflee.voidall.com)
 #   7860  youtube-downloader (yt.voidall.com)
 #   7861  TTT hf_backend     (ttt.voidall.com)
 #
 # 7860 is the Hugging Face default, which is why two of these wanted it.
+#
+# One rule keeps "pick a free port" from being chaos: THE TUNNEL IS THE SOURCE
+# OF TRUTH. A hostname already routed keeps the port its rule names, so
+# redeploying can never drift onto a new port and strand the rule pointing at
+# nothing. A new hostname takes its preferred port, or the next free one.
 
+find_cf_config() {
+  local candidate
+  for candidate in /etc/cloudflared/config.yml /root/.cloudflared/config.yml "$HOME/.cloudflared/config.yml"; do
+    [ -f "$candidate" ] && { printf '%s' "$candidate"; return; }
+  done
+}
+
+# "hostname port" per ingress rule.
+tunnel_rules() {
+  [ -f "${1:-}" ] || return 0
+  python3 - "$1" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1]).read()
+for host, svc in re.findall(r"-\s*hostname:\s*(\S+)\s*\n\s*service:\s*(\S+)", text):
+    m = re.search(r":(\d+)\s*$", svc)
+    print(host, m.group(1) if m else "")
+PYEOF
+}
+
+# Who is listening on $1, if anyone. Empty when the port is free.
 port_holder() {
   ss -ltnp 2>/dev/null | awk -v p=":$1\$" '$4 ~ p {print $NF; exit}'
+}
+
+# True when the port is ours already, or nobody's.
+port_is_ours_or_free() {
+  local port="$1" me="$2" holder mypid
+  holder=$(port_holder "$port")
+  [ -z "$holder" ] && return 0
+  mypid=$(pm2 pid "$me" 2>/dev/null || true)
+  [ -n "$mypid" ] && printf '%s' "$holder" | grep -q "pid=$mypid"
 }
 
 # Refuse to take a port that belongs to something else. pm2 delete + pm2 start
 # would otherwise "succeed" and leave this app crash-looping on EADDRINUSE.
 assert_port_available() {
-  local port="$1" me="$2" holder mypid other
+  local port="$1" me="$2" holder other
+  port_is_ours_or_free "$port" "$me" && return 0
   holder=$(port_holder "$port")
-  [ -z "$holder" ] && { info "Port $port is free"; return 0; }
-
-  mypid=$(pm2 pid "$me" 2>/dev/null || true)
-  if [ -n "$mypid" ] && printf '%s' "$holder" | grep -q "pid=$mypid"; then
-    info "Port $port held by this app's current process — it will be replaced"
-    return 0
-  fi
-
   other=$(pm2 jlist 2>/dev/null | python3 -c "
 import json, sys
 try: procs = json.load(sys.stdin)
@@ -55,39 +86,56 @@ except Exception: procs = []
 print(' '.join(p['name'] for p in procs if p.get('name') != '$me'
                 and p.get('pm2_env', {}).get('status') == 'online'))
 " 2>/dev/null || true)
-
   error "Port $port is already in use by: $holder
   Starting '$me' here would crash-loop on EADDRINUSE, so this stops now.
   Other PM2 apps online: ${other:-none}
   Free the port, or pick another:  PORT=<free-port> bash deploy.sh"
 }
 
-# The tunnel rule must say exactly what we think it says. A bare
-# `grep -q "$DOMAIN"` passes even when the hostname points at a DIFFERENT port,
-# which is the silent failure: the deploy reports success and the tunnel keeps
-# serving whatever used to own that port.
-check_tunnel_route() {
-  python3 - "$1" "$2" "$3" <<'PYEOF'
-import re, sys
-config, domain, port = sys.argv[1], sys.argv[2], sys.argv[3]
-text = open(config).read()
-rules = re.findall(r"-\s*hostname:\s*(\S+)\s*\n\s*service:\s*(\S+)", text)
-ours = [svc for host, svc in rules if host == domain]
-theirs = [host for host, svc in rules if host != domain and svc.endswith(f":{port}")]
-if theirs:
-    print(f"CLASH {' '.join(theirs)}")
-elif not ours:
-    print("MISSING")
-elif any(svc.endswith(f":{port}") for svc in ours):
-    print("OK")
-else:
-    print(f"WRONGPORT {ours[0]}")
-PYEOF
+# Decide which port to run on. Sets PORT.
+resolve_port() {
+  local preferred="$1" domain="$2" me="$3" config="$4"
+  local routed="" taken=" " host rule_port candidate
+
+  while read -r host rule_port; do
+    [ -z "$rule_port" ] && continue
+    [ "$host" = "$domain" ] && routed="$rule_port"
+    taken="$taken$rule_port "
+  done < <(tunnel_rules "$config")
+
+  # 1. An explicit PORT= is an instruction, not a hint. Honour it and check it.
+  if [ -n "${PORT_REQUESTED:-}" ]; then
+    PORT="$PORT_REQUESTED"
+    assert_port_available "$PORT" "$me"
+    info "Port $PORT (set explicitly)"
+    return
+  fi
+
+  # 2. Already routed: that rule decides, so a redeploy stays put.
+  if [ -n "$routed" ]; then
+    PORT="$routed"
+    assert_port_available "$PORT" "$me"
+    info "Port $PORT (from the existing $domain tunnel rule)"
+    return
+  fi
+
+  # 3. Nothing routed yet: preferred port, else the next one free on both
+  #    counts — not listening, and not promised to another hostname.
+  for candidate in $(seq "$preferred" $((preferred + 60))); do
+    case "$taken" in *" $candidate "*) continue ;; esac
+    port_is_ours_or_free "$candidate" "$me" || continue
+    PORT="$candidate"
+    [ "$candidate" = "$preferred" ] && info "Port $PORT" \
+      || info "Port $preferred is taken — using $PORT instead"
+    return
+  done
+  error "No free port in $preferred..$((preferred + 60)). Check: ss -ltnp"
 }
 
 step "Port"
-command -v ss >/dev/null 2>&1 || warn "'ss' not found (install iproute2) — cannot verify the port is free."
-command -v pm2 >/dev/null 2>&1 && assert_port_available "$PORT" "$APP_NAME" || true
+command -v ss >/dev/null 2>&1 || warn "'ss' not found (install iproute2) — cannot verify a port is free."
+CF_CONFIG="$(find_cf_config)"
+resolve_port "$PREFERRED_PORT" "$DOMAIN" "$APP_NAME" "$CF_CONFIG"
 
 # ── 1. Node.js (optional — faster JS runtime for yt-dlp bot-detection bypass) ─
 step "Node.js"
@@ -174,7 +222,9 @@ info "Backend deps installed"
 step "PM2 process"
 export PORT="$PORT"
 pm2 delete "$APP_NAME" 2>/dev/null || true
-info "Starting '$APP_NAME' (Flask) on 127.0.0.1:$PORT..."
+# app.py binds 0.0.0.0, so this listens on every interface, not just loopback
+# like the other two apps. Behind the tunnel that is reachable directly by IP.
+info "Starting '$APP_NAME' (Flask) on 0.0.0.0:$PORT..."
 pm2 start "$PYTHON" \
   --name "$APP_NAME" \
   --cwd "$APP_DIR" \
@@ -191,11 +241,7 @@ fi
 
 # ── 9. Cloudflare Tunnel (adds yt.voidall.com, leaves existing rules intact) ─
 step "Cloudflare Tunnel"
-CF_CONFIG=""
-for candidate in /etc/cloudflared/config.yml /root/.cloudflared/config.yml "$HOME/.cloudflared/config.yml"; do
-  [ -f "$candidate" ] && { CF_CONFIG="$candidate"; break; }
-done
-
+# Already located during the port step.
 if [ -z "$CF_CONFIG" ]; then
   warn "cloudflared config not found. Ensure this ingress rule exists:"
   echo "    - hostname: $DOMAIN"
@@ -238,7 +284,7 @@ echo ""
 echo "  ─────────────────────────────────────────"
 info "Done!"
 echo ""
-echo "  Single origin: Flask serves the API + the built UI on 127.0.0.1:$PORT"
+echo "  Single origin: Flask serves the API + the built UI on 0.0.0.0:$PORT"
 echo "  Tunnel:  https://$DOMAIN"
 echo ""
 echo "  Useful commands:"
