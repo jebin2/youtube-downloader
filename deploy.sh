@@ -21,6 +21,74 @@ echo ""
 echo "  YouTube Downloader — VPS deploy (Flask + embedded worker, single origin, Cloudflare Tunnel)"
 echo "  ─────────────────────────────────────────────────────────────────────────────"
 
+# ── Port and route safety ─────────────────────────────────────────────────────
+# Ports on this VPS. Keep this list in step across all three deploy scripts —
+# every one of them refuses to start on a port another app already holds.
+#
+#   3000  FundsFlee          (fundsflee.voidall.com)
+#   7860  youtube-downloader (yt.voidall.com)
+#   7861  TTT hf_backend     (ttt.voidall.com)
+#
+# 7860 is the Hugging Face default, which is why two of these wanted it.
+
+port_holder() {
+  ss -ltnp 2>/dev/null | awk -v p=":$1\$" '$4 ~ p {print $NF; exit}'
+}
+
+# Refuse to take a port that belongs to something else. pm2 delete + pm2 start
+# would otherwise "succeed" and leave this app crash-looping on EADDRINUSE.
+assert_port_available() {
+  local port="$1" me="$2" holder mypid other
+  holder=$(port_holder "$port")
+  [ -z "$holder" ] && { info "Port $port is free"; return 0; }
+
+  mypid=$(pm2 pid "$me" 2>/dev/null || true)
+  if [ -n "$mypid" ] && printf '%s' "$holder" | grep -q "pid=$mypid"; then
+    info "Port $port held by this app's current process — it will be replaced"
+    return 0
+  fi
+
+  other=$(pm2 jlist 2>/dev/null | python3 -c "
+import json, sys
+try: procs = json.load(sys.stdin)
+except Exception: procs = []
+print(' '.join(p['name'] for p in procs if p.get('name') != '$me'
+                and p.get('pm2_env', {}).get('status') == 'online'))
+" 2>/dev/null || true)
+
+  error "Port $port is already in use by: $holder
+  Starting '$me' here would crash-loop on EADDRINUSE, so this stops now.
+  Other PM2 apps online: ${other:-none}
+  Free the port, or pick another:  PORT=<free-port> bash deploy.sh"
+}
+
+# The tunnel rule must say exactly what we think it says. A bare
+# `grep -q "$DOMAIN"` passes even when the hostname points at a DIFFERENT port,
+# which is the silent failure: the deploy reports success and the tunnel keeps
+# serving whatever used to own that port.
+check_tunnel_route() {
+  python3 - "$1" "$2" "$3" <<'PYEOF'
+import re, sys
+config, domain, port = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(config).read()
+rules = re.findall(r"-\s*hostname:\s*(\S+)\s*\n\s*service:\s*(\S+)", text)
+ours = [svc for host, svc in rules if host == domain]
+theirs = [host for host, svc in rules if host != domain and svc.endswith(f":{port}")]
+if theirs:
+    print(f"CLASH {' '.join(theirs)}")
+elif not ours:
+    print("MISSING")
+elif any(svc.endswith(f":{port}") for svc in ours):
+    print("OK")
+else:
+    print(f"WRONGPORT {ours[0]}")
+PYEOF
+}
+
+step "Port"
+command -v ss >/dev/null 2>&1 || warn "'ss' not found (install iproute2) — cannot verify the port is free."
+command -v pm2 >/dev/null 2>&1 && assert_port_available "$PORT" "$APP_NAME" || true
+
 # ── 1. Node.js (optional — faster JS runtime for yt-dlp bot-detection bypass) ─
 step "Node.js"
 export NVM_DIR="$HOME/.nvm"
@@ -125,11 +193,22 @@ if [ -z "$CF_CONFIG" ]; then
   warn "cloudflared config not found. Ensure this ingress rule exists:"
   echo "    - hostname: $DOMAIN"
   echo "      service: http://localhost:$PORT"
-elif grep -q "$DOMAIN" "$CF_CONFIG"; then
-  info "$DOMAIN already routed in tunnel config — no change needed"
 else
-  sudo cp "$CF_CONFIG" "${CF_CONFIG}.bak"
-  sudo python3 - "$CF_CONFIG" "$DOMAIN" "$PORT" <<'PYEOF'
+  ROUTE=$(check_tunnel_route "$CF_CONFIG" "$DOMAIN" "$PORT")
+  case "$ROUTE" in
+    OK)
+      info "$DOMAIN → localhost:$PORT already routed — no change needed" ;;
+    CLASH*)
+      error "Port $PORT is already routed to ${ROUTE#CLASH } in $CF_CONFIG.
+  Adding $DOMAIN on the same port would give two hostnames one app.
+  Pick a free port:  PORT=<free-port> bash deploy.sh" ;;
+    WRONGPORT*)
+      error "$DOMAIN is routed to ${ROUTE#WRONGPORT } in $CF_CONFIG, not port $PORT.
+  This deploy would look successful while the tunnel kept serving the old app.
+  Fix the rule by hand, or deploy on that port:  PORT=<that-port> bash deploy.sh" ;;
+    MISSING)
+      sudo cp "$CF_CONFIG" "${CF_CONFIG}.bak"
+      sudo python3 - "$CF_CONFIG" "$DOMAIN" "$PORT" <<'PYEOF'
 import sys, re
 config_path, domain, port = sys.argv[1], sys.argv[2], sys.argv[3]
 new_rule = f"  - hostname: {domain}\n    service: http://localhost:{port}\n"
@@ -139,11 +218,12 @@ content = (content[:m.start()] + new_rule + content[m.start():]) if m else (cont
 open(config_path, 'w').write(content)
 print("Config updated.")
 PYEOF
-  info "Added $DOMAIN → localhost:$PORT to tunnel config (existing rules untouched)"
-  systemctl is-active --quiet cloudflared 2>/dev/null && sudo systemctl restart cloudflared && info "cloudflared restarted" \
-    || warn "Restart cloudflared manually: sudo systemctl restart cloudflared"
-  warn "Ensure DNS for $DOMAIN is routed to this tunnel:"
-  echo "    cloudflared tunnel route dns <TUNNEL_NAME> $DOMAIN"
+      info "Added $DOMAIN → localhost:$PORT (existing rules untouched; backup at ${CF_CONFIG}.bak)"
+      systemctl is-active --quiet cloudflared 2>/dev/null && sudo systemctl restart cloudflared && info "cloudflared restarted" \
+        || warn "Restart cloudflared manually: sudo systemctl restart cloudflared"
+      warn "Ensure DNS for $DOMAIN points at this tunnel:"
+      echo "    cloudflared tunnel route dns <TUNNEL_NAME> $DOMAIN" ;;
+  esac
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
