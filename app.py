@@ -28,6 +28,16 @@ COOKIES_FILE = 'cookies.txt'
 # Chrome user-agent to match cookies
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
+# Explicit JS runtime for yt-dlp to solve YouTube's signature/n/PO-token
+# challenges. Passed as --js-runtimes so it never depends on ambient PATH.
+def _js_runtimes():
+    deno = os.environ.get('DENO_BIN') or os.path.expanduser('~/.deno/bin/deno')
+    if os.path.exists(deno):
+        return ["--js-runtimes", f"deno:{deno}"]
+    return []
+
+JS_RUNTIMES = _js_runtimes()
+
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Resolve the YouTube cookie source. Precedence, highest first:
@@ -142,6 +152,7 @@ def extract_video_info(url):
             '--cookies', COOKIES_FILE,
             '--user-agent', USER_AGENT,
             '--no-check-certificates',
+            *JS_RUNTIMES,
             url
         ]
         result = subprocess.run(
@@ -230,6 +241,7 @@ def worker_loop():
                         '--no-check-certificates',
                         '--retries', '3',
                         '--fragment-retries', '3',
+                        *JS_RUNTIMES,
                         url
                     ]
                     
