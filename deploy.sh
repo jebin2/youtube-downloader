@@ -99,6 +99,24 @@ port_holder() {
   ss -ltnp 2>/dev/null | awk -v p=":$1\$" '$4 ~ p {print $NF; exit}'
 }
 
+# Wait (up to ~$1 seconds) for something to start answering on $2.
+# PM2 marks a process "online" the moment it spawns, but the app takes a beat
+# to bind its socket — so the route table's ss-based probe would otherwise
+# report a freshly-started app as "not running".
+wait_for_port() {
+  local timeout="${1:-30}" port="$2" waited=0 appname="${3:-}"
+  while [ "$waited" -lt "$timeout" ]; do
+    port_holder "$port" >/dev/null && return 0
+    # Stop early if the app has already died on us.
+    if [ -n "$appname" ] && [ -z "$(pm2 pid "$appname" 2>/dev/null || true)" ]; then
+      warn "$appname exited before binding port $port."
+      return 1
+    fi
+    sleep 1; waited=$((waited + 1))
+  done
+  return 1
+}
+
 # True when the port is ours already, or nobody's.
 port_is_ours_or_free() {
   local port="$1" me="$2" holder mypid
@@ -341,6 +359,12 @@ pm2 start "$PYTHON" \
   --time \
   -- app.py
 pm2 save
+
+if ! wait_for_port 30 "$PORT" "$APP_NAME"; then
+  error "'$APP_NAME' did not bind port $PORT within 30s.
+  Check its logs:  pm2 logs $APP_NAME"
+fi
+info "'$APP_NAME' up — answering on $HOST:$PORT"
 
 STARTUP_CMD=$(pm2 startup 2>&1 | grep "sudo" || true)
 if [ -n "$STARTUP_CMD" ]; then
