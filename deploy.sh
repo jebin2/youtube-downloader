@@ -405,6 +405,13 @@ info "Backend deps installed"
 # ── 8. Start / restart the app with PM2 (single worker; embedded queue) ───────
 step "PM2 process"
 export PORT="$PORT"
+# Optional outbound proxy from .env.local/.env (residential proxy to bypass
+# YouTube bot detection on the datacenter IP). Passed through to the app.
+PROXY_VAL=$(envget YTDLP_PROXY)
+if [ -n "$PROXY_VAL" ]; then
+  export YTDLP_PROXY="$PROXY_VAL"
+  info "Using yt-dlp proxy $PROXY_VAL"
+fi
 # Make deno (and the standalone yt-dlp binary) available to the worker's
 # subprocesses, which otherwise inherit only the PM2 environment, not this
 # script's PATH.

@@ -105,6 +105,13 @@ else:
           f"{COOKIE_SOURCE!r} - downloads may fail (bot detection). "
           f"Re-export from a logged-in browser to ~/.yt_cookie.txt")
 
+# Optional outbound proxy for yt-dlp. Datacenter IPs (this VPS) get flagged by
+# YouTube as "Sign in to confirm you're not a bot"; routing through a
+# residential/trusted proxy with YTDLP_PROXY is the reliable fix.
+YTDLP_PROXY = os.environ.get('YTDLP_PROXY', '').strip()
+if YTDLP_PROXY:
+    print(f"🔀 YouTube downloads will use proxy {YTDLP_PROXY}")
+
 # Worker state
 worker_thread = None
 worker_running = False
@@ -191,12 +198,14 @@ def extract_video_info(url):
                  f"(auth_present={validate_cookies(COOKIE_SOURCE)})")
     try:
         cookies_arg = ['--cookies', os.path.abspath(COOKIE_SOURCE)] if COOKIE_SOURCE else []
+        proxy_arg = ['--proxy', YTDLP_PROXY] if YTDLP_PROXY else []
         command = [
             'yt-dlp',
             '--dump-json',
             '--no-download',
             '--no-warnings',
             *cookies_arg,
+            *proxy_arg,
             '--user-agent', USER_AGENT,
             '--no-check-certificates',
             *JS_RUNTIMES,
@@ -280,6 +289,7 @@ def worker_loop():
                     
                     log_step("Downloading video...")
                     cookies_arg = ['--cookies', os.path.abspath(COOKIE_SOURCE)] if COOKIE_SOURCE else []
+                    proxy_arg = ['--proxy', YTDLP_PROXY] if YTDLP_PROXY else []
                     command = [
                         'yt-dlp',
                         '-f', 'b',  # Best single format (most compatible)
@@ -287,6 +297,7 @@ def worker_loop():
                         '--no-playlist',
                         '--no-warnings',
                         *cookies_arg,
+                        *proxy_arg,
                         '--user-agent', USER_AGENT,
                         '--no-check-certificates',
                         '--retries', '3',
