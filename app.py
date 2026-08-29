@@ -49,11 +49,11 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 # Resolve the YouTube cookie source. Precedence, highest first:
 #   1. YOUTUBE_COOKIES raw block (env)  — inline Netscape block
 #   2. YOUTUBE_COOKIES_FILE/COOKIES_FILE (env) — explicit path to a Netscape cookie file
-#   3. default ~/.yt_cookie.txt         — a Netscape cookie file in the app user's home
-#   4. an existing cookies.txt          — already provisioned (e.g. by deploy.sh)
+#   3. default cookies.txt in the current/app directory — kept in sync by the user/deploy
+#   4. fallback cookies.txt referenced relative to this file's directory
 #
-# Returns (path_or_None, loaded_via_raw_block). The worker reads the resolved
-# path directly so it can never silently go stale like a one-time copy could.
+# The worker reads the resolved path directly so it can never silently go
+# stale like a one-time copy could.
 AUTH_COOKIE_MARKERS = ('SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID')
 
 def resolve_cookie_source():
@@ -63,12 +63,17 @@ def resolve_cookie_source():
             f.write(raw)
         return COOKIES_FILE
 
-    path = (os.environ.get('COOKIES_FILE') or os.environ.get('YOUTUBE_COOKIES_FILE')
-            or os.path.expanduser('~/.yt_cookie.txt'))
-    # Prefer the configured/home source; fall back to the provisioned copy.
-    if not os.path.exists(path) and os.path.exists(COOKIES_FILE):
-        path = COOKIES_FILE
-    return path if os.path.exists(path) else None
+    # Explicit override wins; otherwise always use cookies.txt in the current
+    # working directory (or this file's directory), ignoring any ~/.yt_cookie.txt.
+    cookie_file = os.environ.get('COOKIES_FILE') or os.environ.get('YOUTUBE_COOKIES_FILE')
+    if cookie_file:
+        return cookie_file if os.path.exists(cookie_file) else None
+
+    for candidate in (COOKIES_FILE,
+                      os.path.join(os.path.dirname(os.path.abspath(__file__)), COOKIES_FILE)):
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 def validate_cookies(path):
     """Check the cookie file has recognizable auth cookies."""
