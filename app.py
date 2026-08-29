@@ -28,6 +28,12 @@ COOKIES_FILE = 'cookies.txt'
 # Chrome user-agent to match cookies
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
+def log_step(msg, warn=False):
+    """Step-by-step logger with timestamp, so the worker's progress is visible in pm2 logs."""
+    ts = datetime.now().strftime('%H:%M:%S')
+    prefix = '⚠️ ' if warn else '🔹 '
+    print(f"{prefix}[{ts}] {msg}", flush=True)
+
 # Explicit JS runtime for yt-dlp to solve YouTube's signature/n/PO-token
 # challenges. Passed as --js-runtimes so it never depends on ambient PATH.
 def _js_runtimes():
@@ -42,28 +48,57 @@ os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Resolve the YouTube cookie source. Precedence, highest first:
 #   1. YOUTUBE_COOKIES raw block (env)  — inline Netscape block
-#   2. YOUTUBE_COOKIES_FILE (env)       — explicit path to a Netscape cookie file
+#   2. YOUTUBE_COOKIES_FILE/COOKIES_FILE (env) — explicit path to a Netscape cookie file
 #   3. default ~/.yt_cookie.txt         — a Netscape cookie file in the app user's home
 #   4. an existing cookies.txt          — already provisioned (e.g. by deploy.sh)
-def setup_cookies():
-    cookies_content = os.environ.get('YOUTUBE_COOKIES')
-    if cookies_content:
+#
+# Returns (path_or_None, loaded_via_raw_block). The worker reads the resolved
+# path directly so it can never silently go stale like a one-time copy could.
+AUTH_COOKIE_MARKERS = ('SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID')
+
+def resolve_cookie_source():
+    raw = os.environ.get('YOUTUBE_COOKIES')
+    if raw:
         with open(COOKIES_FILE, 'w') as f:
-            f.write(cookies_content)
-        print("✅ YouTube cookies loaded from environment variable")
-        return
+            f.write(raw)
+        return COOKIES_FILE
 
-    cookie_path = os.environ.get('YOUTUBE_COOKIES_FILE', os.path.expanduser('~/.yt_cookie.txt'))
-    if os.path.exists(cookie_path):
-        import shutil
-        shutil.copy(cookie_path, COOKIES_FILE)
-        print(f"✅ YouTube cookies copied from {cookie_path}")
-    elif os.path.exists(COOKIES_FILE):
-        print("✅ YouTube cookies file found")
-    else:
-        print("⚠️  No YouTube cookies found - downloads may fail")
+    path = (os.environ.get('COOKIES_FILE') or os.environ.get('YOUTUBE_COOKIES_FILE')
+            or os.path.expanduser('~/.yt_cookie.txt'))
+    # Prefer the configured/home source; fall back to the provisioned copy.
+    if not os.path.exists(path) and os.path.exists(COOKIES_FILE):
+        path = COOKIES_FILE
+    return path if os.path.exists(path) else None
 
-setup_cookies()
+def validate_cookies(path):
+    """Check the cookie file has recognizable auth cookies."""
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        with open(path, 'r', errors='replace') as f:
+            content = f.read()
+    except Exception:
+        return False
+    for marker in AUTH_COOKIE_MARKERS:
+        if f"\t{marker}\t" in content:
+            return True
+    return False
+
+COOKIE_SOURCE = resolve_cookie_source()
+_valid = validate_cookies(COOKIE_SOURCE)
+n_cookies = 0
+if COOKIE_SOURCE:
+    try:
+        n_cookies = sum(1 for line in open(COOKIE_SOURCE, errors='replace')
+                        if line.strip() and not line.startswith('#'))
+    except Exception:
+        n_cookies = 0
+if _valid:
+    print(f"✅ YouTube cookies loaded from {COOKIE_SOURCE} ({n_cookies} lines)")
+else:
+    print(f"⚠️  YouTube cookies MISSING or lack auth cookies ({n_cookies} lines) at "
+          f"{COOKIE_SOURCE!r} - downloads may fail (bot detection). "
+          f"Re-export from a logged-in browser to ~/.yt_cookie.txt")
 
 # Worker state
 worker_thread = None
@@ -143,23 +178,26 @@ def cleanup_old_entries():
 
 def extract_video_info(url):
     """Extract video info using yt-dlp without downloading"""
+    log_step(f"Extracting video info for {url}")
+    if not COOKIE_SOURCE:
+        log_step("No cookie file available - downloads will likely hit bot detection", warn=True)
+    else:
+        log_step(f"Using cookies from {COOKIE_SOURCE} "
+                 f"(auth_present={validate_cookies(COOKIE_SOURCE)})")
     try:
+        cookies_arg = ['--cookies', os.path.abspath(COOKIE_SOURCE)] if COOKIE_SOURCE else []
         command = [
             'yt-dlp',
             '--dump-json',
             '--no-download',
             '--no-warnings',
-            '--cookies', COOKIES_FILE,
+            *cookies_arg,
             '--user-agent', USER_AGENT,
             '--no-check-certificates',
             *JS_RUNTIMES,
             url
         ]
-        print(f"🔧 [debug] env http_proxy={os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY')} "
-              f"https_proxy={os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')} "
-              f"no_proxy={os.environ.get('no_proxy') or os.environ.get('NO_PROXY')} "
-              f"PATH_has_deno={'deno' in os.environ.get('PATH','')} "
-              f"JS_RUNTIMES={JS_RUNTIMES}")
+        log_step("Running: " + " ".join(str(c) for c in command))
         result = subprocess.run(
             command,
             capture_output=True,
@@ -169,15 +207,16 @@ def extract_video_info(url):
         
         if result.returncode == 0:
             info = json.loads(result.stdout)
+            log_step(f"Video info OK: {info.get('title', 'Unknown')}")
             return {
                 'title': info.get('title', 'Unknown'),
                 'duration': info.get('duration_string', info.get('duration', '')),
                 'thumbnail': info.get('thumbnail', ''),
             }
         else:
-            print(f"⚠️  yt-dlp info error: {result.stderr}")
+            log_step(f"yt-dlp info error: {result.stderr}", warn=True)
     except Exception as e:
-        print(f"⚠️  Failed to extract video info: {e}")
+        log_step(f"Failed to extract video info: {e}", warn=True)
     
     return None
 
@@ -234,14 +273,15 @@ def worker_loop():
                     # Download video
                     output_template = os.path.join(DOWNLOAD_FOLDER, f"{download_id}.%(ext)s")
                     
-                    print(f"🔄 Downloading video...")
+                    log_step("Downloading video...")
+                    cookies_arg = ['--cookies', os.path.abspath(COOKIE_SOURCE)] if COOKIE_SOURCE else []
                     command = [
                         'yt-dlp',
                         '-f', 'b',  # Best single format (most compatible)
                         '-o', output_template,
                         '--no-playlist',
                         '--no-warnings',
-                        '--cookies', COOKIES_FILE,
+                        *cookies_arg,
                         '--user-agent', USER_AGENT,
                         '--no-check-certificates',
                         '--retries', '3',
@@ -249,6 +289,7 @@ def worker_loop():
                         *JS_RUNTIMES,
                         url
                     ]
+                    log_step("Running: " + " ".join(str(c) for c in command))
                     
                     result = subprocess.run(
                         command,
