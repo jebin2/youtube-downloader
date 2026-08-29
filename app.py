@@ -1,5 +1,7 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
-from flask_cors import CORS
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import sqlite3
 import os
 import uuid
@@ -10,8 +12,15 @@ import time
 import json
 import re
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI(title="YouTube Downloader", version="2.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 DOWNLOAD_FOLDER = 'downloads'
 COOKIES_FILE = 'cookies.txt'
@@ -49,6 +58,9 @@ setup_cookies()
 # Worker state
 worker_thread = None
 worker_running = False
+
+class DownloadRequest(BaseModel):
+    url: str = ""
 
 def init_db():
     conn = sqlite3.connect('youtube_downloads.db')
@@ -313,24 +325,22 @@ def is_valid_youtube_url(url):
             return True
     return False
 
-@app.route('/')
+@app.get("/")
 def index():
-    return send_from_directory('.', 'index.html')
+    return FileResponse("index.html")
 
-@app.route('/api/download', methods=['POST'])
-def submit_download():
-    data = request.get_json()
+@app.post("/api/download", status_code=201)
+def submit_download(body: DownloadRequest = None):
+    if body is None or not body.url:
+        return JSONResponse({'error': 'No URL provided'}, status_code=400)
     
-    if not data or 'url' not in data:
-        return jsonify({'error': 'No URL provided'}), 400
-    
-    url = data['url'].strip()
+    url = body.url.strip()
     
     if not url:
-        return jsonify({'error': 'URL is empty'}), 400
+        return JSONResponse({'error': 'URL is empty'}, status_code=400)
     
     if not is_valid_youtube_url(url):
-        return jsonify({'error': 'Invalid YouTube URL'}), 400
+        return JSONResponse({'error': 'Invalid YouTube URL'}, status_code=400)
     
     download_id = str(uuid.uuid4())
     
@@ -346,15 +356,15 @@ def submit_download():
     # Start worker on first download
     start_worker()
     
-    return jsonify({
+    return {
         'id': download_id,
         'url': url,
         'status': 'not_started',
         'message': 'Download queued successfully'
-    }), 201
+    }
 
-@app.route('/api/downloads/<download_id>/retry', methods=['POST'])
-def retry_download(download_id):
+@app.post("/api/downloads/{download_id}/retry")
+def retry_download(download_id: str):
     """Reset a failed download to not_started so the worker retries it."""
     conn = sqlite3.connect('youtube_downloads.db')
     conn.row_factory = sqlite3.Row
@@ -364,11 +374,11 @@ def retry_download(download_id):
 
     if row is None:
         conn.close()
-        return jsonify({'error': 'Download not found'}), 404
+        return JSONResponse({'error': 'Download not found'}, status_code=404)
 
     if row['status'] != 'failed':
         conn.close()
-        return jsonify({'error': f'Only failed downloads can be retried (status: {row["status"]})'}), 400
+        return JSONResponse({'error': f'Only failed downloads can be retried (status: {row["status"]})'}, status_code=400)
 
     c.execute('''UPDATE downloads
                  SET status = 'not_started', error = NULL, processed_at = NULL
@@ -379,12 +389,12 @@ def retry_download(download_id):
     # Ensure the worker is running to pick up the queued download
     start_worker()
 
-    return jsonify({
+    return {
         'id': download_id,
         'url': row['url'],
         'status': 'not_started',
         'message': 'Download queued for retry'
-    }), 200
+    }
 
 def get_average_processing_time(cursor):
     """Calculate average processing time from completed downloads in seconds"""
@@ -411,7 +421,7 @@ def get_average_processing_time(cursor):
     
     return total_seconds / count if count > 0 else 60.0
 
-@app.route('/api/downloads', methods=['GET'])
+@app.get("/api/downloads")
 def get_downloads():
     conn = sqlite3.connect('youtube_downloads.db')
     conn.row_factory = sqlite3.Row
@@ -462,10 +472,10 @@ def get_downloads():
             'estimated_start_seconds': estimated_start_seconds
         })
     
-    return jsonify(downloads)
+    return downloads
 
-@app.route('/api/downloads/<download_id>', methods=['GET'])
-def get_download(download_id):
+@app.get("/api/downloads/{download_id}")
+def get_download(download_id: str):
     conn = sqlite3.connect('youtube_downloads.db')
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -474,7 +484,7 @@ def get_download(download_id):
     
     if row is None:
         conn.close()
-        return jsonify({'error': 'Download not found'}), 404
+        return JSONResponse({'error': 'Download not found'}, status_code=404)
     
     # Calculate queue position and estimated time if download is waiting
     queue_position = None
@@ -501,7 +511,7 @@ def get_download(download_id):
     
     conn.close()
     
-    return jsonify({
+    return {
         'id': row['id'],
         'url': row['url'],
         'title': row['title'],
@@ -515,10 +525,10 @@ def get_download(download_id):
         'processed_at': row['processed_at'],
         'queue_position': queue_position,
         'estimated_start_seconds': estimated_start_seconds
-    })
+    }
 
-@app.route('/api/downloads/<download_id>/video', methods=['GET'])
-def download_video(download_id):
+@app.get("/api/downloads/{download_id}/video")
+def download_video(download_id: str):
     conn = sqlite3.connect('youtube_downloads.db')
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -527,14 +537,14 @@ def download_video(download_id):
     conn.close()
     
     if row is None:
-        return jsonify({'error': 'Download not found'}), 404
+        return JSONResponse({'error': 'Download not found'}, status_code=404)
     
     if row['status'] != 'completed':
-        return jsonify({'error': 'Video not ready yet'}), 400
+        return JSONResponse({'error': 'Video not ready yet'}, status_code=400)
     
     filepath = row['filepath']
     if not filepath or not os.path.exists(filepath):
-        return jsonify({'error': 'Video file not found'}), 404
+        return JSONResponse({'error': 'Video file not found'}, status_code=404)
     
     # Get filename for download
     title = row['title'] or 'video'
@@ -545,21 +555,22 @@ def download_video(download_id):
     ext = os.path.splitext(filepath)[1]
     download_name = f"{safe_title}{ext}"
     
-    return send_file(
-        filepath,
-        as_attachment=True,
-        download_name=download_name
+    return FileResponse(
+        path=filepath,
+        filename=download_name,
+        media_type="application/octet-stream"
     )
 
-@app.route('/health', methods=['GET'])
+@app.get("/health")
 def health():
-    return jsonify({
+    return {
         'status': 'healthy',
         'service': 'youtube-downloader',
         'worker_running': worker_running
-    })
+    }
 
 if __name__ == '__main__':
+    import uvicorn
     init_db()
     print("\n" + "="*60)
     print("🚀 YouTube Downloader API Server")
@@ -575,4 +586,4 @@ if __name__ == '__main__':
     # deploy sets HOST=127.0.0.1, so there it answers only the Cloudflare
     # Tunnel rather than anyone who finds the server's IP.
     host = os.environ.get('HOST', '0.0.0.0')
-    app.run(debug=False, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, log_level="info")
