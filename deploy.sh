@@ -59,6 +59,41 @@ for host, svc in re.findall(r"-\s*hostname:\s*(\S+)\s*\n\s*service:\s*(\S+)", te
 PYEOF
 }
 
+# What the tunnel already says about this hostname and port. One of:
+#
+#   OK                  $domain already points at $port — nothing to do
+#   WRONGPORT <port>    $domain is routed, but somewhere else
+#   CLASH <hostname>    $port is already promised to a different hostname
+#   MISSING             the tunnel has never heard of $domain
+#
+# Both failure cases are worth stopping for. A rule pointing at the wrong port
+# makes a deploy look successful while the tunnel keeps serving the old app, and
+# two hostnames on one port quietly give them the same app.
+check_tunnel_route() {
+  local config="$1" domain="$2" port="$3"
+  local host rule_port routed="" clash=""
+
+  while read -r host rule_port; do
+    [ -z "$rule_port" ] && continue
+    if [ "$host" = "$domain" ]; then
+      routed="$rule_port"
+    elif [ "$rule_port" = "$port" ]; then
+      clash="$host"
+    fi
+  done < <(tunnel_rules "$config")
+
+  # The hostname's own rule is the more specific fact, so it is reported first
+  # even when something else holds the port too.
+  if [ -n "$routed" ]; then
+    [ "$routed" = "$port" ] && { printf 'OK'; return; }
+    printf 'WRONGPORT %s' "$routed"
+    return
+  fi
+
+  [ -n "$clash" ] && { printf 'CLASH %s' "$clash"; return; }
+  printf 'MISSING'
+}
+
 # Who is listening on $1, if anyone. Empty when the port is free.
 port_holder() {
   ss -ltnp 2>/dev/null | awk -v p=":$1\$" '$4 ~ p {print $NF; exit}'
