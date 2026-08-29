@@ -253,7 +253,7 @@ for host, port, state, app, is_me in rows:
     dot = f"{GREEN}●{NC}" if state == "online" else f"{YELLOW}○{NC}"
     here = f"  {GREEN}← this app{NC}" if is_me else ""
     print(f"  {host.ljust(w_host)}  {port.rjust(5)}  {dot} {state.ljust(w_state)}  {app.ljust(w_app)}{here}")
- print(line)
+print(line)
 PYEOF
 }
 
