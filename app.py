@@ -21,13 +21,24 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
-# Create cookies file from environment variable if it exists
+# Resolve the YouTube cookie source. Precedence, highest first:
+#   1. YOUTUBE_COOKIES raw block (env)  — inline Netscape block
+#   2. YOUTUBE_COOKIES_FILE (env)       — explicit path to a Netscape cookie file
+#   3. default ~/.yt_cookie.txt         — a Netscape cookie file in the app user's home
+#   4. an existing cookies.txt          — already provisioned (e.g. by deploy.sh)
 def setup_cookies():
     cookies_content = os.environ.get('YOUTUBE_COOKIES')
     if cookies_content:
         with open(COOKIES_FILE, 'w') as f:
             f.write(cookies_content)
         print("✅ YouTube cookies loaded from environment variable")
+        return
+
+    cookie_path = os.environ.get('YOUTUBE_COOKIES_FILE', os.path.expanduser('~/.yt_cookie.txt'))
+    if os.path.exists(cookie_path):
+        import shutil
+        shutil.copy(cookie_path, COOKIES_FILE)
+        print(f"✅ YouTube cookies copied from {cookie_path}")
     elif os.path.exists(COOKIES_FILE):
         print("✅ YouTube cookies file found")
     else:

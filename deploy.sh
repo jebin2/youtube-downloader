@@ -349,11 +349,26 @@ envget() {
   done
   printf '%s' "$v"
 }
-COOKIES=$(envget YOUTUBE_COOKIES)
-[ -z "$COOKIES" ] && warn "YOUTUBE_COOKIES is not set — set it in .env.local or downloads may fail (bot detection)."
-if [ -n "$COOKIES" ]; then
-  printf '%s\n' "$COOKIES" > "$APP_DIR/cookies.txt"
-  info "cookies.txt written from YOUTUBE_COOKIES"
+# Resolve the YouTube cookie source and copy it into the app as cookies.txt.
+#
+# Precedence, highest first:
+#   1. COOKIES_FILE env var            — an explicit path to a Netscape cookie file
+#   2. YOUTUBE_COOKIES raw block       — inline Netscape block in .env.local/.env
+#   3. default ~/.yt_cookie.txt        — a Netscape cookie file in the deploy user's home
+# A missing source is only a warning: datacenter IPs hit YouTube bot detection and
+# downloads fail without cookies, but that is the deploy user's call, not an error.
+COOKIE_FILE="${COOKIES_FILE:-$HOME/.yt_cookie.txt}"
+if [ -f "$COOKIE_FILE" ]; then
+  cp "$COOKIE_FILE" "$APP_DIR/cookies.txt"
+  info "cookies.txt copied from $COOKIE_FILE"
+else
+  COOKIES=$(envget YOUTUBE_COOKIES)
+  if [ -n "$COOKIES" ]; then
+    printf '%s\n' "$COOKIES" > "$APP_DIR/cookies.txt"
+    info "cookies.txt written from YOUTUBE_COOKIES"
+  else
+    warn "No YouTube cookies found ($COOKIE_FILE missing, YOUTUBE_COOKIES unset) — downloads may fail (bot detection)."
+  fi
 fi
 info "Deploying $DOMAIN → localhost:$PORT"
 
