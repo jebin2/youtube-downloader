@@ -155,6 +155,11 @@ def extract_video_info(url):
             *JS_RUNTIMES,
             url
         ]
+        print(f"🔧 [debug] env http_proxy={os.environ.get('http_proxy') or os.environ.get('HTTP_PROXY')} "
+              f"https_proxy={os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY')} "
+              f"no_proxy={os.environ.get('no_proxy') or os.environ.get('NO_PROXY')} "
+              f"PATH_has_deno={'deno' in os.environ.get('PATH','')} "
+              f"JS_RUNTIMES={JS_RUNTIMES}")
         result = subprocess.run(
             command,
             capture_output=True,
