@@ -340,6 +340,11 @@ info "yt-dlp $YTDLP_VERSION ($YTDLP_BIN)"
 # config, and lives in ~/.deno/bin/deno, which yt-dlp finds automatically.
 step "deno (JS runtime)"
 if ! command -v deno &>/dev/null && [ ! -x "$HOME/.deno/bin/deno" ]; then
+  # The deno installer needs unzip (or 7z) to unpack the release.
+  if ! command -v unzip &>/dev/null; then
+    warn "unzip not found — installing (required by the deno installer)..."
+    sudo apt-get update -qq && sudo apt-get install -y unzip
+  fi
   warn "deno not found — installing (curl | sh)..."
   curl -fsSL --retry 3 https://deno.land/install.sh | sh
 fi
