@@ -353,6 +353,39 @@ def submit_download():
         'message': 'Download queued successfully'
     }), 201
 
+@app.route('/api/downloads/<download_id>/retry', methods=['POST'])
+def retry_download(download_id):
+    """Reset a failed download to not_started so the worker retries it."""
+    conn = sqlite3.connect('youtube_downloads.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('SELECT * FROM downloads WHERE id = ?', (download_id,))
+    row = c.fetchone()
+
+    if row is None:
+        conn.close()
+        return jsonify({'error': 'Download not found'}), 404
+
+    if row['status'] != 'failed':
+        conn.close()
+        return jsonify({'error': f'Only failed downloads can be retried (status: {row["status"]})'}), 400
+
+    c.execute('''UPDATE downloads
+                 SET status = 'not_started', error = NULL, processed_at = NULL
+                 WHERE id = ?''', (download_id,))
+    conn.commit()
+    conn.close()
+
+    # Ensure the worker is running to pick up the queued download
+    start_worker()
+
+    return jsonify({
+        'id': download_id,
+        'url': row['url'],
+        'status': 'not_started',
+        'message': 'Download queued for retry'
+    }), 200
+
 def get_average_processing_time(cursor):
     """Calculate average processing time from completed downloads in seconds"""
     cursor.execute('''SELECT created_at, processed_at FROM downloads 

@@ -803,7 +803,12 @@
                     if (dl.status === 'completed') {
                         actionHtml = `<button class="btn btn-small btn-download" onclick="downloadVideo('${dl.id}')">⬇️ Save</button>`;
                     } else if (dl.status === 'failed') {
-                        actionHtml = `<button class="btn btn-small" onclick="showInfo('${dl.id}')" style="background: var(--error);">❌ Error</button>`;
+                        actionHtml = `
+                            <div style="display:flex; gap:0.4rem; justify-content:center;">
+                                <button class="btn btn-small" onclick="retryDownload('${dl.id}')">🔄 Retry</button>
+                                <button class="btn btn-small" onclick="showInfo('${dl.id}')" style="background: var(--error);">❌ Error</button>
+                            </div>
+                        `;
                     }
 
                     return `
@@ -826,6 +831,24 @@
         // Download video file
         function downloadVideo(downloadId) {
             window.location.href = `${API_URL}/downloads/${downloadId}/video`;
+        }
+
+        // Retry a failed download
+        async function retryDownload(downloadId) {
+            if (!confirm('Retry this download?')) return;
+            try {
+                const response = await fetch(`${API_URL}/downloads/${downloadId}/retry`, { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok) {
+                    alert(data.error || 'Retry failed');
+                    return;
+                }
+            } catch (error) {
+                console.error('Error retrying download:', error);
+                alert('Failed to retry download');
+                return;
+            }
+            loadDownloads();
         }
 
         // Show info modal
