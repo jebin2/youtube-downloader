@@ -33,6 +33,13 @@ youtube-downloader/
 pip install -r requirements.txt
 ```
 
+yt-dlp is used as a standalone binary (not a pip package). Download `yt-dlp_linux` from the [latest release](https://github.com/yt-dlp/yt-dlp/releases/latest) and place it on your PATH as `yt-dlp`:
+
+```bash
+curl -L -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux
+chmod +x /usr/local/bin/yt-dlp
+```
+
 ### 2. Start the API Server
 
 ```bash
@@ -321,7 +328,7 @@ CREATE TABLE downloads (
 ## Troubleshooting
 
 **Worker not processing downloads:**
-- Ensure yt-dlp is properly installed (`pip install yt-dlp`)
+- Ensure the yt-dlp binary is available in PATH (`yt-dlp --version`)
 - Check that ffmpeg is installed for video processing
 - Verify the YouTube URL is valid and accessible
 

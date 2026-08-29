@@ -12,14 +12,15 @@ RUN apt-get update && apt-get install -y \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
+# Download yt-dlp standalone binary (latest release: 2026.08.19)
+RUN curl -L -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux \
+    && chmod +x /usr/local/bin/yt-dlp
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Update yt-dlp to latest version
-RUN pip install --upgrade yt-dlp
 
 # Copy application files
 COPY . .

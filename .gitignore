@@ -4,3 +4,6 @@ cookies.txt
 *.cookies.txt
 cc.txt
 venv/
+.venv/
+.env.local
+bin/
