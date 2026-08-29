@@ -132,6 +132,78 @@ resolve_port() {
   error "No free port in $preferred..$((preferred + 60)). Check: ss -ltnp"
 }
 
+# Every hostname this tunnel serves, and whether anything is answering on it.
+# Read from the cloudflared config rather than a list kept in these scripts —
+# a hand-maintained table is exactly the thing that goes quietly out of date.
+print_routes() {
+  local config="$1" domain="$2"
+  if [ -z "$config" ] || [ ! -f "$config" ]; then
+    warn "No cloudflared config found — cannot list the routes."
+    return
+  fi
+  PM2_JSON="$(pm2 jlist 2>/dev/null || echo '[]')" \
+  LISTENERS="$(ss -ltnp 2>/dev/null || true)" \
+  python3 - "$config" "$domain" <<'PYEOF'
+import json, os, re, sys
+
+config, current = sys.argv[1], sys.argv[2]
+GREEN, YELLOW, DIM, BOLD, NC = "\033[0;32m", "\033[1;33m", "\033[2m", "\033[1m", "\033[0m"
+
+rules = []
+for host, svc in re.findall(r"-\s*hostname:\s*(\S+)\s*\n\s*service:\s*(\S+)",
+                            open(config).read()):
+    m = re.search(r":(\d+)\s*$", svc)
+    rules.append((host, m.group(1) if m else "?"))
+
+# port -> pid, from the listening sockets
+listening = {}
+for line in os.environ.get("LISTENERS", "").splitlines():
+    addr = re.search(r"\s(\S+):(\d+)\s", line)
+    pid = re.search(r"pid=(\d+)", line)
+    if addr:
+        listening[addr.group(2)] = pid.group(1) if pid else ""
+
+# pid -> pm2 name
+try:
+    procs = json.loads(os.environ.get("PM2_JSON") or "[]")
+except Exception:
+    procs = []
+by_pid = {str(p.get("pid")): p.get("name", "") for p in procs if p.get("pid")}
+by_name = {p.get("name", ""): p.get("pm2_env", {}).get("status", "") for p in procs}
+
+rows = []
+for host, port in rules:
+    pid = listening.get(port)
+    if pid is None:
+        state, app = "not running", "—"
+    else:
+        app = by_pid.get(pid, "")
+        state = by_name.get(app, "online") if app else "online"
+        app = app or "(not pm2)"
+    rows.append((host, port, state, app, host == current))
+
+if not rows:
+    print("  (no hostname rules in the tunnel config)")
+    sys.exit()
+
+w_host = max(6, max(len(r[0]) for r in rows))
+w_app = max(3, max(len(r[3]) for r in rows))
+w_state = max(6, max(len(r[2]) for r in rows))
+line = "  " + "─" * (w_host + w_app + w_state + 17)
+
+print()
+print(f"  {BOLD}Cloudflare Tunnel routes{NC}  {DIM}({config}){NC}")
+print(line)
+print(f"  {BOLD}{'DOMAIN'.ljust(w_host)}  {'PORT'.rjust(5)}  {'STATUS'.ljust(w_state + 2)}  {'PM2'.ljust(w_app)}{NC}")
+print(line)
+for host, port, state, app, is_me in rows:
+    dot = f"{GREEN}●{NC}" if state == "online" else f"{YELLOW}○{NC}"
+    here = f"  {GREEN}← this app{NC}" if is_me else ""
+    print(f"  {host.ljust(w_host)}  {port.rjust(5)}  {dot} {state.ljust(w_state)}  {app.ljust(w_app)}{here}")
+print(line)
+PYEOF
+}
+
 step "Port"
 command -v ss >/dev/null 2>&1 || warn "'ss' not found (install iproute2) — cannot verify a port is free."
 CF_CONFIG="$(find_cf_config)"
@@ -280,6 +352,9 @@ PYEOF
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
+echo ""
+print_routes "$CF_CONFIG" "$DOMAIN"
+
 echo ""
 echo "  ─────────────────────────────────────────"
 info "Done!"
