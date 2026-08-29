@@ -405,10 +405,18 @@ open(config_path, 'w').write(content)
 print("Config updated.")
 PYEOF
       info "Added $DOMAIN → localhost:$PORT (existing rules untouched; backup at ${CF_CONFIG}.bak)"
+      # Point DNS at the tunnel so the hostname resolves (mirrors
+      # jebin2/lib/scripts/setup_cloudflare_tunnel.sh: tunnel route dns).
+      TUNNEL_NAME="${DOMAIN%%.*}"
+      if command -v cloudflared >/dev/null 2>&1 && cloudflared tunnel list 2>/dev/null | grep -q "$TUNNEL_NAME"; then
+        cloudflared tunnel route dns --overwrite-dns "$TUNNEL_NAME" "$DOMAIN" \
+          && info "DNS route added: $DOMAIN → tunnel '$TUNNEL_NAME'" \
+          || warn "Failed to add DNS route — add manually: cloudflared tunnel route dns $TUNNEL_NAME $DOMAIN"
+      else
+        warn "Tunnel '$TUNNEL_NAME' not found — add DNS manually: cloudflared tunnel route dns <TUNNEL_NAME> $DOMAIN"
+      fi
       systemctl is-active --quiet cloudflared 2>/dev/null && sudo systemctl restart cloudflared && info "cloudflared restarted" \
-        || warn "Restart cloudflared manually: sudo systemctl restart cloudflared"
-      warn "Ensure DNS for $DOMAIN points at this tunnel:"
-      echo "    cloudflared tunnel route dns <TUNNEL_NAME> $DOMAIN" ;;
+        || warn "Restart cloudflared manually: sudo systemctl restart cloudflared" ;;
   esac
 fi
 
