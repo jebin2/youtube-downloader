@@ -261,9 +261,15 @@ PYEOF
 # resolves. Mirrors jebin2/lib/scripts/setup_cloudflare_tunnel.sh (route dns);
 # runs even when the ingress rule already exists, because adding a rule never
 # registers DNS on its own.
+#
+# The tunnel name is read from the cloudflared config (tunnel: NAME) rather
+# than guessed from the subdomain, because the config — not the hostname label —
+# is the source of truth for what the tunnel is called.
 ensure_dns_route() {
-  local domain="$1" tunnel="${1%%.*}"
-  if command -v cloudflared >/dev/null 2>&1 && cloudflared tunnel list 2>/dev/null | grep -q "$tunnel"; then
+  local domain="$1" config="$2" tunnel
+  tunnel=$(grep -E '^tunnel:' "$config" 2>/dev/null | awk '{print $2}' | tr -d '"' || true)
+  [ -z "$tunnel" ] && tunnel="${domain%%.*}"
+  if command -v cloudflared >/dev/null 2>&1 && cloudflared tunnel list 2>/dev/null | grep -qw "$tunnel"; then
     cloudflared tunnel route dns --overwrite-dns "$tunnel" "$domain" \
       && info "DNS route ensured: $domain → tunnel '$tunnel'" \
       || warn "Failed to add DNS route — add manually: cloudflared tunnel route dns $tunnel $domain"
@@ -399,7 +405,7 @@ else
   case "$ROUTE" in
     OK)
       info "$DOMAIN → localhost:$PORT already routed — no change needed"
-      ensure_dns_route "$DOMAIN" ;;
+      ensure_dns_route "$DOMAIN" "$CF_CONFIG" ;;
     CLASH*)
       error "Port $PORT is already routed to ${ROUTE#CLASH } in $CF_CONFIG.
   Adding $DOMAIN on the same port would give two hostnames one app.
@@ -421,7 +427,7 @@ open(config_path, 'w').write(content)
 print("Config updated.")
 PYEOF
       info "Added $DOMAIN → localhost:$PORT (existing rules untouched; backup at ${CF_CONFIG}.bak)"
-      ensure_dns_route "$DOMAIN"
+      ensure_dns_route "$DOMAIN" "$CF_CONFIG"
       systemctl is-active --quiet cloudflared 2>/dev/null && sudo systemctl restart cloudflared && info "cloudflared restarted" \
         || warn "Restart cloudflared manually: sudo systemctl restart cloudflared" ;;
   esac
