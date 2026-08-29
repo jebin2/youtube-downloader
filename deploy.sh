@@ -294,9 +294,11 @@ info "Backend deps installed"
 step "PM2 process"
 export PORT="$PORT"
 pm2 delete "$APP_NAME" 2>/dev/null || true
-# app.py binds 0.0.0.0, so this listens on every interface, not just loopback
-# like the other two apps. Behind the tunnel that is reachable directly by IP.
-info "Starting '$APP_NAME' (Flask) on 0.0.0.0:$PORT..."
+# Loopback only: everything reaches this through the Cloudflare Tunnel, so
+# there is no reason to answer anyone who finds the server's IP. app.py still
+# defaults to 0.0.0.0 for the container deploys, which need it.
+export HOST=127.0.0.1
+info "Starting '$APP_NAME' (Flask) on $HOST:$PORT..."
 pm2 start "$PYTHON" \
   --name "$APP_NAME" \
   --cwd "$APP_DIR" \
@@ -359,7 +361,7 @@ echo ""
 echo "  ─────────────────────────────────────────"
 info "Done!"
 echo ""
-echo "  Single origin: Flask serves the API + the built UI on 0.0.0.0:$PORT"
+echo "  Single origin: Flask serves the API + the built UI on 127.0.0.1:$PORT"
 echo "  Tunnel:  https://$DOMAIN"
 echo ""
 echo "  Useful commands:"

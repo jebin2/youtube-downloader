@@ -526,4 +526,9 @@ if __name__ == '__main__':
     
     # Use PORT environment variable for Hugging Face compatibility
     port = int(os.environ.get('PORT', 7860))
-    app.run(debug=False, host='0.0.0.0', port=port)
+    # 0.0.0.0 by default because Docker/Render/HF run this inside a container,
+    # where binding loopback would make it unreachable from outside. The VPS
+    # deploy sets HOST=127.0.0.1, so there it answers only the Cloudflare
+    # Tunnel rather than anyone who finds the server's IP.
+    host = os.environ.get('HOST', '0.0.0.0')
+    app.run(debug=False, host=host, port=port)
