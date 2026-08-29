@@ -334,6 +334,20 @@ export PATH="$YTDLP_DIR:$PATH"
 YTDLP_VERSION="$("$YTDLP_BIN" --version)"
 info "yt-dlp $YTDLP_VERSION ($YTDLP_BIN)"
 
+# ── 5b. JS runtime for YouTube PO-token / botguard challenges ─────────────────
+# Modern YouTube extraction (and 'The page needs to be reloaded' on datacenter
+# IPs) needs a JS runtime; deno is enabled by default with no extra yt-dlp
+# config, and lives in ~/.deno/bin/deno, which yt-dlp finds automatically.
+step "deno (JS runtime)"
+if ! command -v deno &>/dev/null && [ ! -x "$HOME/.deno/bin/deno" ]; then
+  warn "deno not found — installing (curl | sh)..."
+  curl -fsSL --retry 3 https://deno.land/install.sh | sh
+fi
+DENO_BIN="${DENO_INSTALL:-$HOME/.deno}/bin/deno"
+[ -x "$DENO_BIN" ] || warn "deno install appears to have failed — YouTube PO-token challenges may fail."
+export PATH="$HOME/.deno/bin:$PATH"
+info "deno $("$DENO_BIN" --version 2>/dev/null | head -1)"
+
 # ── 6. Environment validation ─────────────────────────────────────────────────
 step "Environment"
 ENV_FILE="$APP_DIR/.env.local"
@@ -382,6 +396,10 @@ info "Backend deps installed"
 # ── 8. Start / restart the app with PM2 (single worker; embedded queue) ───────
 step "PM2 process"
 export PORT="$PORT"
+# Make deno (and the standalone yt-dlp binary) available to the worker's
+# subprocesses, which otherwise inherit only the PM2 environment, not this
+# script's PATH.
+export PATH="$YTDLP_DIR:$HOME/.deno/bin:$PATH"
 pm2 delete "$APP_NAME" 2>/dev/null || true
 # Loopback only: everything reaches this through the Cloudflare Tunnel, so
 # there is no reason to answer anyone who finds the server's IP. app.py still
